@@ -5,6 +5,7 @@ description = "A simple command-line todo application"
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
 requires-python = ">=3.9"
 dependencies = [
+    "openai>=2.38.0",
     "uv",
 ]
 

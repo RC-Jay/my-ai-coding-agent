@@ -1,9 +1,10 @@
 # My AI Coding Agent
 
-An interactive AI coding agent powered by Google Gemini that can create and edit multi-file Python projects from natural language prompts.
+An interactive AI coding agent that can create and edit multi-file Python projects from natural language prompts. Supports multiple LLM providers — bring your own API key.
 
 ## Features
 
+- **Multi-provider** — choose between Google Gemini or Azure OpenAI; credentials are saved locally so you only enter them once
 - **Interactive REPL** — have a back-and-forth conversation to build and refine your project
 - **Multi-file project support** — the agent creates properly structured Python projects, not just single scripts
 - **New or existing projects** — start fresh or load an existing project (the agent reads it first to get up to speed)
@@ -15,7 +16,14 @@ An interactive AI coding agent powered by Google Gemini that can create and edit
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- A [Google AI Studio](https://aistudio.google.com/apikey) API key
+- An API key for at least one supported provider (see below)
+
+## Supported providers
+
+| Provider | What you need |
+|----------|--------------|
+| [Google Gemini](https://aistudio.google.com/apikey) | API key from Google AI Studio |
+| [Azure OpenAI](https://portal.azure.com) | API key, endpoint URL, and deployment name |
 
 ## Setup
 
@@ -27,11 +35,9 @@ cd my-ai-coding-agent
 # Create virtual environment and install dependencies
 uv venv
 uv pip install -e .
-
-# Add your Gemini API key
-cp .env.example .env
-# Edit .env and set GEMINI_API_KEY=your_key_here
 ```
+
+No `.env` file needed — API keys are entered on first run and stored locally in a SQLite database (`data/config.db`).
 
 ## Usage
 
@@ -39,15 +45,26 @@ cp .env.example .env
 uv run main.py
 ```
 
-You'll be prompted to choose a working directory and whether you're starting a new project or continuing an existing one.
+On first run you'll be guided through setup:
 
 ```
 AI Code Agent — type 'exit' to quit
-────────────────────────────────────────
+────────────────────────────���───────────
+
 Working directory (leave blank to use .../projects):
 New or existing project? [n/e]: n
 Project name: my-todo-app
 Working directory set to: .../projects/my-todo-app
+
+Select provider:
+  1. Gemini  (last used)
+  2. Azure OpenAI
+Choice [1]:
+
+Select model:
+  1. gemini-2.5-flash  (last used)
+  2. gemini-2.5-pro
+Choice [1]:
 
 You: Build a CLI todo app with add, list, and delete commands
 Agent: ...
@@ -55,6 +72,8 @@ You: Add a priority field to tasks
 Agent: ...
 You: exit
 ```
+
+On subsequent runs, provider, model, and credentials are pre-filled from the local database.
 
 ### Options
 
@@ -66,22 +85,37 @@ You: exit
 
 ```
 my-ai-coding-agent/
-├── main.py              # CLI, setup, entry point
+├── main.py                    # CLI, setup, entry point
 ├── agent/
 │   ├── __init__.py
-│   ├── loop.py          # Agent loop and API retry logic
-│   ├── tools.py         # Tools: list_files, read_file, write_file, run_command
-│   └── prompts.py       # System instruction / best practices prompt
+│   ├── loop.py                # Provider-agnostic agent loop
+│   ├── tools.py               # Tools: list_files, read_file, write_file, run_command
+│   ├── prompts.py             # System instruction / best practices prompt
+│   ├── storage.py             # SQLite-backed credential store
+│   └── providers/
+│       ├── base.py            # BaseProvider ABC + ProviderResponse / ToolCall types
+│       ├── gemini.py          # Google Gemini implementation
+│       ├── azure_openai.py    # Azure OpenAI implementation
+│       ├── utils.py           # Python function → OpenAI tool schema conversion
+│       └── __init__.py        # create_provider() factory
 ├── pyproject.toml
-└── .env.example
+└── uv.lock
 ```
 
 ## How it works
 
-1. The agent receives your prompt along with four tools: `list_files`, `read_file`, `write_file`, and `run_command`
-2. Gemini decides which tools to call and in what order
-3. Tool results are fed back into the conversation — the loop continues until Gemini stops calling tools
-4. The full conversation history is preserved across prompts, so the agent always has context of what it built
+1. On startup you choose a provider and model; credentials are loaded from the local DB (or prompted for once and saved)
+2. The agent receives your prompt along with four tools: `list_files`, `read_file`, `write_file`, and `run_command`
+3. The model decides which tools to call and in what order
+4. Tool results are fed back into the conversation — the loop continues until the model returns a plain text response
+5. Each provider manages its own conversation history internally, so the loop is completely provider-agnostic
+6. The full history is preserved across prompts within a session, so the agent always has context of what it built
+
+## Adding a new provider
+
+1. Create `agent/providers/<name>.py` implementing `BaseProvider` (`send_message` + `send_tool_results`)
+2. Add it to the factory in `agent/providers/__init__.py`
+3. Add its entry to `_PROVIDERS` and `_MODELS` in `main.py`
 
 ## License
 

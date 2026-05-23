@@ -13,6 +13,9 @@ build/
 # Agent projects output
 projects/
 
+# Credentials / local DB
+data/
+
 # IDE
 .idea/
 .vscode/
