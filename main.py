@@ -55,7 +55,6 @@ def main():
             prompt = get_prompt()
             continue
 
-        print("\nThinking...")
         try:
             run_agent(provider, prompt, verbose=args.verbose)
         except KeyboardInterrupt:
