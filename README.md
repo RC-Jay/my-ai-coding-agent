@@ -85,29 +85,42 @@ On subsequent runs, provider, model, and credentials are pre-filled from the loc
 
 ```
 my-ai-coding-agent/
-├── main.py                    # CLI, setup, entry point
+├── main.py                      # Entry point — CLI args, wires modules, runs REPL
 ├── agent/
 │   ├── __init__.py
-│   ├── loop.py                # Provider-agnostic agent loop
-│   ├── tools.py               # Tools: list_files, read_file, write_file, run_command
-│   ├── prompts.py             # System instruction / best practices prompt
-│   ├── storage.py             # SQLite-backed credential store
+│   ├── loop.py                  # Provider-agnostic agent loop with iteration guard
+│   ├── tools.py                 # Tools: list_files, read_file, write_file, run_command
+│   ├── prompts.py               # System instruction / best practices prompt
+│   ├── storage.py               # SQLite-backed credential store
+│   ├── setup/
+│   │   ├── __init__.py          # Facade: exports setup_project, setup_provider
+│   │   ├── project.py           # Working dir + new/existing project selection
+│   │   └── provider.py          # Provider/model/credential prompts and registry
 │   └── providers/
-│       ├── base.py            # BaseProvider ABC + ProviderResponse / ToolCall types
-│       ├── gemini.py          # Google Gemini implementation
-│       ├── azure_openai.py    # Azure OpenAI implementation
-│       ├── utils.py           # Python function → OpenAI tool schema conversion
-│       └── __init__.py        # create_provider() factory
+│       ├── __init__.py          # create_provider() factory
+│       ├── base.py              # BaseProvider ABC + ProviderResponse / ToolCall types
+│       ├── gemini.py            # Google Gemini implementation
+│       ├── azure_openai.py      # Azure OpenAI implementation
+│       └── utils.py             # Python function → OpenAI tool schema conversion
 ├── pyproject.toml
 └── uv.lock
 ```
+
+## Design patterns
+
+| Pattern | Where |
+|---------|-------|
+| **Strategy** | `BaseProvider` / `GeminiProvider` / `AzureOpenAIProvider` — swap providers without touching the loop |
+| **Factory** | `create_provider()` in `agent/providers/__init__.py` — centralises provider instantiation |
+| **Facade** | `agent/setup/__init__.py` — single import surface hiding project + provider setup internals |
+| **Repository** | `Storage` in `agent/storage.py` — all persistence in one place |
 
 ## How it works
 
 1. On startup you choose a provider and model; credentials are loaded from the local DB (or prompted for once and saved)
 2. The agent receives your prompt along with four tools: `list_files`, `read_file`, `write_file`, and `run_command`
 3. The model decides which tools to call and in what order
-4. Tool results are fed back into the conversation — the loop continues until the model returns a plain text response
+4. Tool results are fed back into the conversation — the loop continues until the model returns a plain text response (capped at 20 iterations to prevent runaway loops)
 5. Each provider manages its own conversation history internally, so the loop is completely provider-agnostic
 6. The full history is preserved across prompts within a session, so the agent always has context of what it built
 
@@ -115,7 +128,7 @@ my-ai-coding-agent/
 
 1. Create `agent/providers/<name>.py` implementing `BaseProvider` (`send_message` + `send_tool_results`)
 2. Add it to the factory in `agent/providers/__init__.py`
-3. Add its entry to `_PROVIDERS` and `_MODELS` in `main.py`
+3. Add a `_collect_<name>()` function and register it in `_COLLECTORS` in `agent/setup/provider.py`
 
 ## License
 
