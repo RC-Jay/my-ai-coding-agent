@@ -1,11 +1,14 @@
 import argparse
 
 from agent import run_agent
+from agent import audit
+from agent.budget import Budget
+from agent.display import console
 from agent.prompts import system_prompt
 from agent.providers import create_provider
 from agent.setup import setup_project, setup_provider
 from agent.storage import Storage
-from agent.tools import TOOLS
+from agent.tools import create_tools
 
 
 def get_prompt() -> str | None:
@@ -24,29 +27,38 @@ def main():
                         help="Print tool calls and token usage")
     args = parser.parse_args()
 
-    print("AI Code Agent — type 'exit' to quit")
-    print("─" * 40)
+    console.print("[bold]AI Code Agent[/bold] — type [dim]exit[/dim] to quit")
+    console.print("─" * 40)
 
     storage = Storage()
     project_dir, is_new = setup_project()
     provider_config = setup_provider(storage)
+
+    tools, tool_map = create_tools(project_dir)
     provider = create_provider(
         provider_config,
-        tools=TOOLS,
+        tools=tools,
         system_instruction=system_prompt(project_dir),
     )
 
+    budget = Budget(max_tokens=100_000)
+    audit.log_session_start(
+        str(project_dir),
+        provider_config["provider"],
+        provider_config["model"],
+    )
+
     if not is_new:
-        print("\nScanning project — this may take a moment...")
+        console.print("\nScanning project — this may take a moment...")
         try:
             run_agent(provider, (
                 "This is an existing project. Start by listing all files in the current directory. "
                 "Then read whatever files are present — source code, config, docs, anything. "
                 "Give me a short summary of what the project does and what's already been built. "
                 "Don't assume any specific structure or filenames."
-            ), verbose=args.verbose)
+            ), tool_map=tool_map, budget=budget, verbose=args.verbose)
         except Exception as e:
-            print(f"\n[Error during project scan] {e}")
+            console.print(f"\n[red][Error during project scan] {e}[/red]")
 
     prompt = args.prompt or get_prompt()
 
@@ -55,17 +67,27 @@ def main():
             prompt = get_prompt()
             continue
 
+        if budget.tokens_exceeded:
+            console.print("[bold red]Token budget exhausted. Please start a new session.[/bold red]")
+            break
+
+        if budget.turns_exceeded:
+            console.print(f"[yellow]Session turn limit ({budget.max_turns}) reached.[/yellow]")
+            break
+
         try:
-            run_agent(provider, prompt, verbose=args.verbose)
+            run_agent(provider, prompt, tool_map=tool_map, budget=budget, verbose=args.verbose)
         except KeyboardInterrupt:
-            print("\nInterrupted.")
+            console.print("\nInterrupted.")
             break
         except Exception as e:
-            print(f"\n[Error] {e}")
+            console.print(f"\n[red][Error] {e}[/red]")
 
         prompt = get_prompt()
 
-    print("\nGoodbye!")
+    console.print(f"\n[dim]{budget.summary()}[/dim]")
+    console.print("\nGoodbye!")
+    audit.log_session_end(budget.total_tokens)
     storage.close()
 
 
