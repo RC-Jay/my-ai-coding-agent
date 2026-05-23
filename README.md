@@ -11,6 +11,8 @@ An interactive AI coding agent that can create and edit multi-file Python projec
 - **Python best practices** — automatically scaffolds `pyproject.toml`, `README.md`, `.gitignore`, and a `uv` virtual environment
 - **Self-verifying** — the agent runs the project after creating it, catches errors, and fixes them before handing back to you
 - **Tool use** — the agent can list files, read files, write files, and run shell commands autonomously
+- **Live display** — spinner shows elapsed time and the current tool being called; token usage printed after each turn
+- **Guardrails** — path confinement, sensitive file protection, dangerous command blocking, destructive command confirmation, prompt injection detection, file size limits, token budget, and session turn cap
 
 ## Requirements
 
@@ -89,7 +91,11 @@ my-ai-coding-agent/
 ├── agent/
 │   ├── __init__.py
 │   ├── loop.py                  # Provider-agnostic agent loop with iteration guard
-│   ├── tools.py                 # Tools: list_files, read_file, write_file, run_command
+│   ├── tools.py                 # Tool factory: create_tools(project_dir)
+│   ├── guardrails.py            # All guard logic (path, commands, files, injection)
+│   ├── audit.py                 # Append-only JSON audit log (data/audit.log)
+│   ├── budget.py                # Session token budget tracker
+│   ├── display.py               # Live terminal display (rich spinner + elapsed time)
 │   ├── prompts.py               # System instruction / best practices prompt
 │   ├── storage.py               # SQLite-backed credential store
 │   ├── setup/
@@ -106,6 +112,19 @@ my-ai-coding-agent/
 └── uv.lock
 ```
 
+## Guardrails
+
+| Guardrail | Trigger | Behaviour |
+|-----------|---------|-----------|
+| **Path confinement** | File op outside project dir | Blocked, audit logged |
+| **Sensitive files** | `.env`, `*.pem`, `*.key`, `id_rsa`, etc. | Blocked, audit logged |
+| **Prompt injection** | File content contains adversarial instructions | File returned with warning appended |
+| **File size limit** | Write > 100 KB | Blocked, audit logged |
+| **Blocked commands** | `sudo`, `curl \| sh`, `rm -rf /`, fork bombs | Hard-blocked, audit logged |
+| **Destructive commands** | `rm`, `git reset --hard`, `git push --force` | Pauses agent, asks user `[y/N]` |
+| **Token budget** | 75% used → warning, 100% → stop | Printed to terminal, audit logged |
+| **Session turn cap** | 50 turns (configurable) | Loop exits gracefully |
+
 ## Design patterns
 
 | Pattern | Where |
@@ -114,6 +133,7 @@ my-ai-coding-agent/
 | **Factory** | `create_provider()` in `agent/providers/__init__.py` — centralises provider instantiation |
 | **Facade** | `agent/setup/__init__.py` — single import surface hiding project + provider setup internals |
 | **Repository** | `Storage` in `agent/storage.py` — all persistence in one place |
+| **Factory (tools)** | `create_tools(project_dir)` in `agent/tools.py` — binds guardrails to the project dir via closures |
 
 ## How it works
 
