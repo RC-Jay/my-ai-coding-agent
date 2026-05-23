@@ -15,6 +15,9 @@ class GeminiProvider(BaseProvider):
         self.tools = tools
         self.system_instruction = system_instruction
         self.history: list[types.Content] = []
+        # Number of entries at the start of history that are injected context
+        # (not real conversation turns).  export_history() skips these.
+        self._context_offset: int = 0
 
     def send_message(self, user_message: str) -> ProviderResponse:
         self.history.append(
@@ -34,6 +37,102 @@ class GeminiProvider(BaseProvider):
         ]
         self.history.append(types.Content(role="user", parts=tool_parts))
         return self._generate()
+
+    # ── Memory interface ──────────────────────────────────────────────────────
+
+    def export_history(self) -> list[dict]:
+        """Convert self.history (Gemini types) to neutral JSON format."""
+        neutral: list[dict] = []
+        for content in self.history[self._context_offset:]:
+            role = "user" if content.role == "user" else "model"
+            parts: list[dict] = []
+            for part in content.parts:
+                if part.text:
+                    parts.append({"type": "text", "text": part.text})
+                elif part.function_call:
+                    parts.append({
+                        "type": "tool_call",
+                        "name": part.function_call.name,
+                        "args": dict(part.function_call.args),
+                        "id": "",
+                    })
+                elif part.function_response:
+                    resp = part.function_response.response
+                    result = (
+                        resp.get("output", str(resp))
+                        if isinstance(resp, dict)
+                        else str(resp)
+                    )
+                    parts.append({
+                        "type": "tool_result",
+                        "name": part.function_response.name,
+                        "result": result,
+                        "id": "",
+                    })
+            if parts:
+                neutral.append({"role": role, "parts": parts})
+        return neutral
+
+    def load_context(self, summary: str | None, turns: list[dict]) -> None:
+        """Restore conversation from neutral format, optionally injecting a summary."""
+        history: list[types.Content] = []
+
+        if summary:
+            history.append(types.Content(
+                role="user",
+                parts=[types.Part(text=f"[Context from previous session]\n{summary}")],
+            ))
+            history.append(types.Content(
+                role="model",
+                parts=[types.Part(text=(
+                    "Understood. I have context from our previous session "
+                    "and will continue accordingly."
+                ))],
+            ))
+
+        self._context_offset = len(history)  # everything before this is injected
+
+        for entry in turns:
+            role = entry.get("role", "user")
+            parts: list[types.Part] = []
+            for p in entry.get("parts", []):
+                ptype = p.get("type")
+                if ptype == "text":
+                    parts.append(types.Part(text=p["text"]))
+                elif ptype == "tool_call":
+                    parts.append(types.Part(
+                        function_call=types.FunctionCall(
+                            name=p["name"],
+                            args=p.get("args", {}),
+                        )
+                    ))
+                elif ptype == "tool_result":
+                    parts.append(types.Part(
+                        function_response=types.FunctionResponse(
+                            name=p["name"],
+                            response={"output": p.get("result", "")},
+                        )
+                    ))
+            if parts:
+                history.append(types.Content(role=role, parts=parts))
+
+        self.history = history
+
+    def one_shot(self, prompt: str) -> str:
+        """Send a single prompt without touching conversation history."""
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_instruction,
+                ),
+            )
+            return response.text or ""
+        except Exception as e:
+            return f"[Summary generation failed: {e}]"
+
+    # ── Core generation ───────────────────────────────────────────────────────
 
     def _generate(self) -> ProviderResponse:
         config = types.GenerateContentConfig(

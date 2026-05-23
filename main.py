@@ -4,6 +4,7 @@ from agent import run_agent
 from agent import audit
 from agent.budget import Budget
 from agent.display import console
+from agent.memory import Memory, SUMMARISE_AFTER_TURNS
 from agent.prompts import system_prompt
 from agent.providers import create_provider
 from agent.setup import setup_project, setup_provider
@@ -41,6 +42,15 @@ def main():
         system_instruction=system_prompt(project_dir),
     )
 
+    # ── Memory: restore context from previous sessions ────────────────────────
+    memory = Memory(project_dir)
+    summary, recent_turns = memory.load()
+    has_context = bool(summary or recent_turns)
+
+    if has_context:
+        console.print("[dim]Restoring conversation context from previous session...[/dim]")
+        provider.load_context(summary, recent_turns)
+
     budget = Budget(max_tokens=100_000)
     audit.log_session_start(
         str(project_dir),
@@ -48,7 +58,9 @@ def main():
         provider_config["model"],
     )
 
-    if not is_new:
+    # Scan an existing project only when there is no saved memory context.
+    # If context was restored the agent already knows what's been built.
+    if not is_new and not has_context:
         console.print("\nScanning project — this may take a moment...")
         try:
             run_agent(provider, (
@@ -57,6 +69,7 @@ def main():
                 "Give me a short summary of what the project does and what's already been built. "
                 "Don't assume any specific structure or filenames."
             ), tool_map=tool_map, budget=budget, verbose=args.verbose)
+            memory.save(provider.export_history())
         except Exception as e:
             console.print(f"\n[red][Error during project scan] {e}[/red]")
 
@@ -77,6 +90,7 @@ def main():
 
         try:
             run_agent(provider, prompt, tool_map=tool_map, budget=budget, verbose=args.verbose)
+            memory.save(provider.export_history())
         except KeyboardInterrupt:
             console.print("\nInterrupted.")
             break
@@ -84,6 +98,15 @@ def main():
             console.print(f"\n[red][Error] {e}[/red]")
 
         prompt = get_prompt()
+
+    # ── Memory: summarise if the session has grown long ───────────────────────
+    if memory.count_stored_turns() >= SUMMARISE_AFTER_TURNS:
+        console.print("\n[dim]Summarising session history for next run...[/dim]")
+        try:
+            summary_text = provider.one_shot(memory.build_summary_prompt())
+            memory.save_summary(summary_text)
+        except Exception as e:
+            console.print(f"[dim][Could not generate summary: {e}][/dim]")
 
     console.print(f"\n[dim]{budget.summary()}[/dim]")
     console.print("\nGoodbye!")
