@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+
+# Agent projects output
+projects/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
