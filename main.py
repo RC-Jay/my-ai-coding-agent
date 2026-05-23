@@ -61,14 +61,18 @@ def main():
     # Scan an existing project only when there is no saved memory context.
     # If context was restored the agent already knows what's been built.
     if not is_new and not has_context:
-        console.print("\nScanning project — this may take a moment...")
+        console.print("[dim]Reading project...[/dim]")
+        # Restrict the scan to read-only tools so the agent cannot run commands
+        # or modify files — regardless of what the system prompt says about verification.
+        scan_tool_map = {k: tool_map[k] for k in ("list_files", "read_file")}
         try:
             run_agent(provider, (
-                "This is an existing project. Start by listing all files in the current directory. "
-                "Then read whatever files are present — source code, config, docs, anything. "
-                "Give me a short summary of what the project does and what's already been built. "
-                "Don't assume any specific structure or filenames."
-            ), tool_map=tool_map, budget=budget, verbose=args.verbose)
+                "This is an existing project. "
+                "List the files in the current directory, then read the key source files "
+                "(skip lockfiles, __pycache__, .venv, and generated artefacts). "
+                "Give a short summary of what the project does and what has been built. "
+                "Do NOT run any commands. Do NOT write or modify any files. Read only."
+            ), tool_map=scan_tool_map, budget=budget, verbose=args.verbose)
             memory.save(provider.export_history())
         except Exception as e:
             console.print(f"\n[red][Error during project scan] {e}[/red]")
