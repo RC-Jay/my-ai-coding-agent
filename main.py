@@ -26,11 +26,26 @@ _MODELS = {
 # Provider / credential setup
 # ---------------------------------------------------------------------------
 
+def _mask(value: str) -> str:
+    """Partially mask a sensitive value for display."""
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:4]}...{value[-4:]}"
+
+
 def _prompt_cached(storage: Storage, key: str, label: str, secret: bool = False) -> str:
-    """Return stored value for key, or ask the user and save it."""
-    value = storage.get(key)
-    if value:
-        return value
+    """
+    Return stored value for key, or ask the user and save it.
+    If a value is already stored, show it and allow the user to overwrite by typing a new one.
+    """
+    existing = storage.get(key)
+    if existing:
+        display = _mask(existing) if secret else existing
+        new_value = input(f"{label} [{display}] (press Enter to keep): ").strip()
+        if new_value:
+            storage.set(key, new_value)
+            return new_value
+        return existing
     value = input(f"{label}: ").strip()
     storage.set(key, value)
     return value
@@ -53,33 +68,35 @@ def setup_provider(storage: Storage):
     config: dict = {"provider": provider_id}
 
     if provider_id == "gemini":
-        config["api_key"] = _prompt_cached(storage, "gemini_api_key", "Gemini API key")
+        config["api_key"] = _prompt_cached(storage, "gemini_api_key", "Gemini API key", secret=True)
+
+        # Gemini requires a model selection
+        models = _MODELS["gemini"]
+        last_model = storage.get("last_model_gemini") or "1"
+
+        print("\nSelect model:")
+        for i, m in enumerate(models, 1):
+            marker = "  (last used)" if str(i) == last_model else ""
+            print(f"  {i}. {m}{marker}")
+
+        model_choice = input(f"Choice [{last_model}]: ").strip() or last_model
+        try:
+            model = models[int(model_choice) - 1]
+        except (ValueError, IndexError):
+            model = models[0]
+            model_choice = "1"
+
+        storage.set("last_model_gemini", model_choice)
+        config["model"] = model
 
     elif provider_id == "azure_openai":
-        config["api_key"]    = _prompt_cached(storage, "azure_api_key",    "Azure OpenAI API key")
+        config["api_key"]    = _prompt_cached(storage, "azure_api_key",    "Azure OpenAI API key", secret=True)
         config["endpoint"]   = _prompt_cached(storage, "azure_endpoint",   "Azure endpoint (https://…)")
-        config["deployment"] = _prompt_cached(storage, "azure_deployment",  "Deployment name")
+        config["deployment"] = _prompt_cached(storage, "azure_deployment", "Deployment name")
+        # Deployment already has the model baked in — no separate model selection needed
+        config["model"] = config["deployment"]
 
-    # Model selection
-    models = _MODELS[provider_id]
-    last_model = storage.get(f"last_model_{provider_id}") or "1"
-
-    print(f"\nSelect model:")
-    for i, m in enumerate(models, 1):
-        marker = "  (last used)" if str(i) == last_model else ""
-        print(f"  {i}. {m}{marker}")
-
-    model_choice = input(f"Choice [{last_model}]: ").strip() or last_model
-    try:
-        model = models[int(model_choice) - 1]
-    except (ValueError, IndexError):
-        model = models[0]
-        model_choice = "1"
-
-    storage.set(f"last_model_{provider_id}", model_choice)
-    config["model"] = model
-
-    print(f"\nUsing {provider_name} / {model}")
+    print(f"\nUsing {provider_name} / {config['model']}")
     return config
 
 
@@ -175,27 +192,33 @@ def main():
 
     # For existing projects, scan and summarise before taking user input
     if not is_new:
+        print("\nScanning project — this may take a moment...")
         try:
             run_agent(provider, (
-                "This is an existing project. Please explore it: list the files and read "
-                "the important ones (README, pyproject.toml, main source files). "
-                "Give me a short summary of what's already been built so you're up to speed "
-                "before I give you further instructions."
+                "This is an existing project. Start by listing all files in the current directory. "
+                "Then read whatever files are present — source code, config, docs, anything. "
+                "Give me a short summary of what the project does and what's already been built. "
+                "Don't assume any specific structure or filenames."
             ), verbose=args.verbose)
         except Exception as e:
             print(f"\n[Error during project scan] {e}")
 
-    prompt = args.prompt or input("\nYou: ").strip()
+    def get_prompt() -> str | None:
+        """Read a line from the user. Returns None on exit (EOF or exit command)."""
+        try:
+            value = input("\nYou (exit to quit): ").strip()
+            return None if value.lower() in ("exit", "quit") else value
+        except (KeyboardInterrupt, EOFError):
+            return None
 
-    while True:
-        if prompt.lower() in ("exit", "quit"):
-            print("Goodbye!")
-            break
+    prompt = args.prompt or get_prompt()
 
+    while prompt is not None:
         if not prompt:
-            prompt = input("\nYou: ").strip()
+            prompt = get_prompt()
             continue
 
+        print("\nThinking...")
         try:
             run_agent(provider, prompt, verbose=args.verbose)
         except KeyboardInterrupt:
@@ -204,8 +227,9 @@ def main():
         except Exception as e:
             print(f"\n[Error] {e}")
 
-        prompt = input("\nYou: ").strip()
+        prompt = get_prompt()
 
+    print("\nGoodbye!")
     storage.close()
 
 

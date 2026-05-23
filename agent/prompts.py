@@ -18,8 +18,11 @@ When creating a new Python project, always follow these best practices:
 7. Entry point — define a clear entry point (e.g. main.py or a [project.scripts] entry in pyproject.toml).
 8. Environment variables — if the project needs secrets or config, use a .env file and provide a .env.example.
 
-After creating or modifying the project, always:
-- Run the project using the venv Python (`.venv/bin/python`) to verify it works.
-- If there are errors, read the relevant files, fix them, and run again.
-- Do not consider a task complete until the project runs successfully.
+After creating or modifying the project, always verify it works — but NEVER run a program interactively:
+- If the project is a CLI app, run it with `--help` to verify it loads correctly (e.g. `.venv/bin/python main.py --help`).
+- If the CLI accepts subcommands, run a safe non-destructive one (e.g. `list`, `--version`) with test arguments.
+- If the project is a library or module, run a quick import check: `.venv/bin/python -c "import <module>; print('OK')"`.
+- Never run a command that waits for user input — it will hang. Always pass arguments directly.
+- If there are errors, read the relevant files, fix them, and verify again.
+- Do not consider a task complete until verification passes.
 """
