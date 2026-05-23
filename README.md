@@ -8,6 +8,8 @@ An interactive AI coding agent that can create and edit multi-file Python projec
 - **Interactive REPL** — have a back-and-forth conversation to build and refine your project
 - **Multi-file project support** — the agent creates properly structured Python projects, not just single scripts
 - **New or existing projects** — start fresh or load an existing project (the agent reads it first to get up to speed)
+- **Persistent memory** — conversation history is saved per project; on the next session the last 20 turns are restored automatically so the agent picks up exactly where you left off
+- **Rolling summarisation** — after 40 turns the agent generates a concise summary on exit; future sessions inject the summary as context so nothing important is lost even as history grows
 - **Python best practices** — automatically scaffolds `pyproject.toml`, `README.md`, `.gitignore`, and a `uv` virtual environment
 - **Self-verifying** — the agent runs the project after creating it, catches errors, and fixes them before handing back to you
 - **Tool use** — the agent can list files, read files, write files, and run shell commands autonomously
@@ -96,6 +98,7 @@ my-ai-coding-agent/
 │   ├── audit.py                 # Append-only JSON audit log (data/audit.log)
 │   ├── budget.py                # Session token budget tracker
 │   ├── display.py               # Live terminal display (rich spinner + elapsed time)
+│   ├── memory.py                # Persistent memory: sliding window + summarisation
 │   ├── prompts.py               # System instruction / best practices prompt
 │   ├── storage.py               # SQLite-backed credential store
 │   ├── setup/
@@ -110,6 +113,16 @@ my-ai-coding-agent/
 │       └── utils.py             # Python function → OpenAI tool schema conversion
 ├── pyproject.toml
 └── uv.lock
+```
+
+Each project's memory lives inside the project folder:
+
+```
+projects/my-todo-app/
+├── ...code files...
+└── .agent/
+    ├── history.json    # full conversation log in neutral format
+    └── summary.json    # rolling LLM-generated summary (written after 40 turns)
 ```
 
 ## Guardrails
@@ -134,6 +147,7 @@ my-ai-coding-agent/
 | **Facade** | `agent/setup/__init__.py` — single import surface hiding project + provider setup internals |
 | **Repository** | `Storage` in `agent/storage.py` — all persistence in one place |
 | **Factory (tools)** | `create_tools(project_dir)` in `agent/tools.py` — binds guardrails to the project dir via closures |
+| **Neutral format** | `agent/memory.py` — cross-provider JSON schema decouples history from any one API's wire format |
 
 ## How it works
 
